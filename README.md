@@ -194,43 +194,43 @@ Ozon — один из крупнейших маркетплейсов в Рос
 
 ![Логическая схема БД](db.png)
 
-| Таблица         | Описание                                         |
-| --------------- | ------------------------------------------------ |
-| users           | Общая информация о пользователях                 |
-| sellers         | Информация о продавцах и их магазинах            |
-| products        | Основная информация о товарах                    |
-| categories      | Категории товаров                                |
-| product_media   | Связь товаров с медиафайлами                     |
-| files           | Информация о файлах (изображения товаров и т.д.) |
-| carts           | Корзины покупок пользователей                    |
-| cart_items      | Товары в корзине                                 |
-| orders          | Заказы пользователей                             |
-| order_items     | Товары в заказе                                  |
-| addresses       | Адреса доставки                                  |
-| reviews         | Отзывы пользователей о товарах                   |
-| review_replies  | Ответы продавцов на отзывы покупателей           |
-| user_actions    | Журнал действий пользователей для аналитики      |
-| recommendations | Рекомендации товаров                             |
+| Таблица | Описание |
+|---|---|
+| `users` | Общая информация о пользователях |
+| `sellers` | Информация о продавцах и их магазинах |
+| `products` | Основная информация о товарах |
+| `categories` | Категории товаров |
+| `product_media` | Связь товаров с медиафайлами |
+| `files` | Информация о файлах (изображения товаров и т.д.) |
+| `product_ratings` | Агрегированная информация о рейтинге товара и количестве отзывов |
+| `product_purchase_stats` | Агрегированная информация о количестве покупок товара |
+| `carts` | Корзины пользователей |
+| `orders` | Заказы пользователей |
+| `addresses` | Адреса доставки |
+| `reviews` | Отзывы и оценки пользователей о товарах |
+| `review_replies` | Ответы продавцов на отзывы покупателей |
+| `user_actions` | Журнал действий пользователей для аналитики |
+| `recommendations` | Персональные рекомендации товаров для пользователя |
 
 ### Расчет размеров таблиц и QPS
 
-| Название таблицы    | Расчет размера строки                                                                                                                                                         | Количество строк | Размер таблицы | Нагрузка на запись (QPS, пик) | Нагрузка на чтение (QPS, пик) |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | -------------- | ----------------------------- | ----------------------------- |
-| **users**           | `ID(8) + email(255) + phone(20) + password_hash(60) + name(100) + role(20) + session(256) + session_expires_at(8) + created_at/updated_at(16)` <br>**≈ 743 Б**                | 83 млн           | **≈ 57.7 ГБ**  | 51                            | 49.8                          |
-| **addresses**       | `ID(8) + user_id(8) + city(100) + street(200) + house(20) + apartment(20) + comment(500) + type(20) + created_at/updated_at(16)` <br>**≈ 892 Б**                              | 166 млн          | **≈ 138 ГБ**   | 2                             | 73.6                          |
-| **sellers**         | `ID(8) + user_id(8) + store_name(255) + description(1000) + rating(8) + created_at/updated_at(16)` <br>**≈ 1.27 КБ**                                                          | 600 000          | **≈ 0.73 ГБ**  | 6.94                          | 29 860                        |
-| **categories**      | `ID(8) + name(100) + parent_id(8) + created_at/updated_at(16)` <br>**≈ 132 Б**                                                                                                | < 100 000        | **< 13 МБ**    | Редко                         | 35 832                        |
-| **products**        | `ID(8) + seller_id(8) + category_id(8) + title(255) + description(2000) + price(8) + stock(4) + status(20) + rating(8) + created_at/updated_at(16)` <br>**≈ 2.3 КБ**          | 250 млн          | **≈ 536 ГБ**   | 13.88                         | 29 860                        |
-| **files**           | `ID(8) + url(500) + type(50) + size(8) + storage_provider(50) + created_at/updated_at(16)` <br>**≈ 632 Б**                                                                    | 1.5 млрд         | **≈ 885 ГБ**   | 13.88                         | 29 860                        |
-| **product_media**   | `ID(8) + product_id(8) + file_id(8) + position(2) + created_at/updated_at(16)` <br>**≈ 42 Б**                                                                                 | 1.5 млрд         | **≈ 58.8 ГБ**  | 13.88                         | 29 860                        |
-| **carts**           | `ID(8) + user_id(8) + created_at/updated_at(16)` <br>**≈ 32 Б**                                                                                                               | 43 млн           | **≈ 1.3 ГБ**   | 614                           | 307                           |
-| **cart_items**      | `ID(8) + cart_id(8) + product_id(8) + quantity(2) + price_snapshot(8) + created_at/updated_at(16)` <br>**≈ 50 Б**                                                             | 79.5 млн         | **≈ 3.7 ГБ**   | 614                           | 307                           |
-| **orders**          | `ID(8) + user_id(8) + delivery_address_id(8) + total_price(8) + status(20) + created_at/updated_at(16)` <br>**≈ 68 Б**                                                        | 1.16 млрд        | **≈ 73.6 ГБ**  | 73.6                          | 73.6                          |
-| **order_items**     | `ID(8) + order_id(8) + product_id(8) + quantity(2) + price(8) + created_at/updated_at(16)` <br>**≈ 50 Б**                                                                     | 2.9 млрд         | **≈ 135 ГБ**   | 73.6                          | 73.6                          |
-| **reviews**         | `ID(8) + product_id(8) + user_id(8) + rating(1) + text(1000) + created_at/updated_at(16)` <br>**≈ 1.02 КБ**                                                                   | 522 млн          | **≈ 497 ГБ**   | 33.2                          | 17.4                          |
-| **review_replies**  | `ID(8) + review_id(8) + seller_id(8) + text(1000) + created_at/updated_at(16)` <br>**≈ 1.01 КБ**                                                                              | 138 млн          | **≈ 130 ГБ**   | 8.74                          | 8.74                          |
-| **user_actions**    | `ID(8) + user_id(8) + product_id(8) + action_type(50) + action_source(50) + session_id(100) + action_value(8) + action_text(500) + created_at/updated_at(16)` <br>**≈ 750 Б** | 92.7 млрд        | **≈ 64.7 ТБ**  | 35 832                        | 5 972                         |
-| **recommendations** | `ID(8) + user_id(8) + product_id(8) + recommendation_type(50) + score(8) + expires_at(8) + created_at/updated_at(16)` <br>**≈ 106 Б**                                         | 4.15 млрд        | **≈ 410 ГБ**   | 14 930                        | 29 860                        |
+| Название таблицы | Расчет размера строки | Количество строк | Размер таблицы | Нагрузка на запись (QPS, пик) | Нагрузка на чтение (QPS, пик) |
+|---|---|---:|---:|---:|---:|
+| **users** | `id(8) + email(255) + phone(20) + password_hash(60) + name(100) + role(20) + session(256) + session_expires_at(8) + created_at/updated_at(16)` <br>**≈ 743 Б** | 83 млн | **≈ 57.4 ГБ** | **57.7** | **56.7** |
+| **addresses** | `id(8) + user_id(8) + city(100) + street(200) + house(20) + apartment(20) + comment(500) + type(20) + created_at/updated_at(16)` <br>**≈ 892 Б** | 166 млн | **≈ 137.9 ГБ** | **3.7** | **73.6** |
+| **files** | `id(8) + url(500) + type(50) + size(8) + storage_provider(50) + created_at/updated_at(16)` <br>**≈ 632 Б** | 1.5 млрд | **≈ 882.9 ГБ** | **83.3** | **65 694.4** |
+| **sellers** | `id(8) + user_id(8) + store_name(255) + description(1000) + rating(8) + created_at/updated_at(16)` <br>**≈ 1.27 КБ** | 600 000 | **≈ 0.72 ГБ** | **0.01** | **6.9** |
+| **categories** | `id(8) + name(100) + parent_id(8) + created_at/updated_at(16)` <br>**≈ 132 Б** | < 100 000 | **< 13 МБ** | **редко** | **35 833.3** |
+| **products** | `id(8) + seller_id(8) + category_id(8) + title(255) + description(2000) + price(8) + stock(4) + status(20) + created_at/updated_at(16)` <br>**≈ 2.27 КБ** | 250 млн | **≈ 541.8 ГБ** | **13.9** | **65 694.4** |
+| **product_media** | `id(8) + product_id(8) + file_id(8) + position(2) + created_at/updated_at(16)` <br>**≈ 42 Б** | 1.5 млрд | **≈ 58.7 ГБ** | **83.3** | **65 694.4** |
+| **product_ratings** | `id(8) + product_id(8) + rating(8) + reviews_count(4) + created_at/updated_at(16)` <br>**≈ 44 Б** | 250 млн | **≈ 10.2 ГБ** | **33.1** | **65 694.4** |
+| **product_purchase_stats** | `id(8) + product_id(8) + purchases_count(8) + created_at/updated_at(16)` <br>**≈ 40 Б** | 250 млн | **≈ 9.3 ГБ** | **184.1** | **29 861.1** |
+| **user_actions** | `id(8) + user_id(8) + product_id(8) + action_type(50) + action_source(50) + session_id(100) + action_value(8) + action_text(500) + created_at/updated_at(16)` <br>**≈ 750 Б** | ≈ 1.05 трлн | **≈ 715 ТБ** | **66 483.0** | **6 648.3** |
+| **recommendations** | `id(8) + user_id(8) + recommended_product_ids + scores + expires_at(8) + created_at/updated_at(16)` <br>**≈ 360 Б** | 83 млн | **≈ 27.8 ГБ** | **1 921.3** | **1 493.1** |
+| **carts** | `id(8) + user_id(8) + product_ids + quantities + created_at/updated_at(16)` <br>**≈ 62 Б** | 43 млн | **≈ 2.5 ГБ** | **613.6** | **306.8** |
+| **orders** | `id(8) + user_id(8) + delivery_address_id(8) + product_ids + quantities + prices + total_price(8) + status(20) + created_at/updated_at(16)` <br>**≈ 118 Б** | 1.16 млрд | **≈ 127.5 ГБ** | **73.6** | **73.6** |
+| **reviews** | `id(8) + product_id(8) + user_id(8) + rating(1) + text(1000) + created_at/updated_at(16)` <br>**≈ 1.02 КБ** | ≈ 276 млн | **≈ 267.6 ГБ** | **17.5** | **2 986.1** |
+| **review_replies** | `id(8) + review_id(8) + seller_id(8) + text(1000) + created_at/updated_at(16)` <br>**≈ 1.02 КБ** | ≈ 138 млн | **≈ 133.5 ГБ** | **8.7** | **2 986.1** |
 
 ## Источники:
 
