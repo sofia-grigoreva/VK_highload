@@ -232,6 +232,99 @@ Ozon — один из крупнейших маркетплейсов в Рос
 | **reviews** | `id(8) + product_id(8) + user_id(8) + rating(1) + text(1000) + created_at/updated_at(16)` <br>**≈ 1.02 КБ** | ≈ 276 млн | **≈ 267.6 ГБ** | **17.5** | **2 986.1** |
 | **review_replies** | `id(8) + review_id(8) + seller_id(8) + text(1000) + created_at/updated_at(16)` <br>**≈ 1.02 КБ** | ≈ 138 млн | **≈ 133.5 ГБ** | **8.7** | **2 986.1** |
 
+## Физическая схема БД
+
+### Размещение таблиц
+
+| Таблица | Хранилище |
+|---|---|
+| `users` | PostgreSQL (Citus) |
+| `sellers` | PostgreSQL (Citus) |
+| `products` | PostgreSQL (Citus) |
+| `categories` | PostgreSQL (Citus) |
+| `files` | PostgreSQL (Citus) |
+| `product_media` | PostgreSQL (Citus) |
+| `product_ratings` | PostgreSQL (Citus) |
+| `product_purchase_stats` | PostgreSQL (Citus) |
+| `carts` | PostgreSQL (Citus) |
+| `orders` | PostgreSQL (Citus) |
+| `addresses` | PostgreSQL (Citus) |
+| `reviews` | PostgreSQL (Citus) |
+| `review_replies` | PostgreSQL (Citus) |
+| `recommendations` | PostgreSQL (Citus) |
+| `user_actions` | ClickHouse |
+| `кэш рекомендаций` | Redis |
+
+В Redis персональные рекомендации хранятся по ключу `user_id` в виде JSON-массива объектов, где для каждого рекомендованного товара сохраняются его идентификатор `product_id` и рассчитанный рейтинг релевантности `score`.
+
+Пример значения, хранимого в Redis:
+
+```json
+[
+  { "product_id": 101, "score": 0.984 },
+  { "product_id": 205, "score": 0.947 },
+  { "product_id": 411, "score": 0.913 },
+  { "product_id": 502, "score": 0.901 }
+]
+```
+
+### Индексы
+
+| Таблица | Состав индекса | Пояснение |
+|---|---|---|
+| `users` | 1) `email, id`<br>2) `phone, id`<br>3) `session, id` | Поиск пользователя по email/телефону и по сессии |
+| `sellers` | 1) `user_id` | Получение профиля продавца по пользователю |
+| `products` | 1) `seller_id, id`<br>2) `category_id, price, id` | Список товаров продавца, список товаров каталога по категории и цене |
+| `categories` | 1) `parent_id, name` | Построение дерева категорий |
+| `product_media` | 1) `product_id, position` | Получение медиа товара в нужном порядке |
+| `product_ratings` | 1) `product_id` | Получение рейтинга и числа отзывов товара |
+| `product_purchase_stats` | 1) `product_id` | Получение количества покупок товара |
+| `carts` | 1) `user_id` | Поиск корзины пользователя |
+| `orders` | 1) `user_id, created_at, id`<br>2) `user_id, status, created_at, id` | История заказов пользователя и текущие заказы пользователя |
+| `addresses` | 1) `user_id` | Список адресов пользователя |
+| `reviews` | 1) `product_id, user_id`<br>2) `product_id, created_at, id` | Получение отзыва пользователя, получение отзывов о товаре |
+| `review_replies` | 1) `review_id` | Получение ответа на конкретный отзыв |
+| `recommendations` | 1) `user_id` | Выдача рекомендаций пользователю |
+
+
+### Шардирование
+
+| Таблица | Подход |
+|---|---|
+| `users` | Хеш-шардирование по `id` |
+| `sellers` | Хеш-шардирование по `user_id` |
+| `products` | Хеш-шардирование по `id` |
+| `categories` | Реплицируется на все узлы |
+| `files` | Хеш-шардирование по `id` |
+| `product_media` | Хеш-шардирование по `product_id` |
+| `product_ratings` | Хеш-шардирование по `product_id` |
+| `product_purchase_stats` | Хеш-шардирование по `product_id` |
+| `carts` | Хеш-шардирование по `user_id` |
+| `orders` | Хеш-шардирование по `user_id` |
+| `addresses` | Хеш-шардирование по `user_id` |
+| `reviews` | Хеш-шардирование по `product_id` |
+| `review_replies` | Хеш-шардирование по `review_id` |
+| `recommendations` | Хеш-шардирование по `user_id` |
+| `user_actions` | Шардирование по `user_id`, внутри шарда — партиционирование по `created_at` |
+| `кэш рекомендаций` | Шардирование с помощью Redis Cluster |
+
+### Резервирование
+
+| Таблица | Подход |
+|---|---|
+| `users`, `sellers`, `products`, `categories`, `files`, `product_media`, `addresses`, `reviews`, `review_replies`, `orders`, `carts` | Master-Slave (1 синхронная и 1 асинхронная) |
+| `product_ratings`, `product_purchase_stats`, `recommendations` | Master-Slave (1 асинхронная реплика) |
+| `user_actions` | ReplicatedMergeTree (2 реплики на шард) |
+
+### Схема резервного копирования
+
+| Компонент | Подход |
+|---|---|
+| PostgreSQL (Citus) | Full backup 1 раз в день + архивирование WAL каждые 15 минут |
+| ClickHouse | Full backup 1 раз в день |
+| Redis | Без резервного копирования |
+
+
 ## Источники:
 
 1. https://mediascope.net/data/#internet
