@@ -234,6 +234,22 @@ Ozon — один из крупнейших маркетплейсов в Рос
 
 ## Физическая схема БД
 
+### Выбор хранилищ
+
+Для транзакционных сущностей (`users`, `orders`, `carts`, `addresses`, `products`, `reviews`) используется PostgreSQL с расширением Citus
+
+Причины выбора:
+
+- PostgreSQL обеспечивает ACID-гарантии, что критично для заказов, корзин, пользователей и адресов доставки
+- поддерживает сложные запросы, JOIN'ы и вторичные индексы
+- Citus позволяет горизонтально масштабировать PostgreSQL за счёт шардирования
+
+Для событийных и аналитических данных используется ClickHouse
+
+Для таблиц с агрегированной информацией и рекомендаций используется Redis, поскольку требуется быстрый доступ по ключу и значения переодически пересчитываются
+
+Для маршрутизации запросов по дополнительным полям (не по ключам шардирования) используется Cassandra, в которой хранится lookup-таблица с соответствием ключа и шарда
+
 ### Размещение таблиц
 
 | Таблица | Хранилище |
@@ -244,77 +260,71 @@ Ozon — один из крупнейших маркетплейсов в Рос
 | `categories` | PostgreSQL (Citus) |
 | `files` | PostgreSQL (Citus) |
 | `product_media` | PostgreSQL (Citus) |
-| `product_ratings` | PostgreSQL (Citus) |
-| `product_purchase_stats` | PostgreSQL (Citus) |
 | `carts` | PostgreSQL (Citus) |
 | `orders` | PostgreSQL (Citus) |
 | `addresses` | PostgreSQL (Citus) |
 | `reviews` | PostgreSQL (Citus) |
 | `review_replies` | PostgreSQL (Citus) |
-| `recommendations` | PostgreSQL (Citus) |
 | `user_actions` | ClickHouse |
-| `кэш рекомендаций` | Redis |
+| `product_ratings` | Redis |
+| `product_purchase_stats` | Redis |
+| `recommendations` | Redis |
+| `shard_lookup` | Cassandra |
 
-В Redis персональные рекомендации хранятся по ключу `user_id` в виде JSON-массива объектов, где для каждого рекомендованного товара сохраняются его идентификатор `product_id` и рассчитанный рейтинг релевантности `score`.
+Для данных в Redis источником истины является ClickHouse. Для Redis настраиваются RDB snapshot'ы. И схема работы будет следующей:
 
-Пример значения, хранимого в Redis:
-
-```json
-[
-  { "product_id": 101, "score": 0.984 },
-  { "product_id": 205, "score": 0.947 },
-  { "product_id": 411, "score": 0.913 },
-  { "product_id": 502, "score": 0.901 }
-]
-```
+- при штатной работе Redis хранит горячие агрегаты и рекомендации
+- при падении Redis данные восстанавливаются из snapshot
+- по расписанию, например ночью, Redis полностью или частично переобновляется из ClickHouseё
+- при необходимости можно пересчитывать только изменившиеся ключи
 
 ### Индексы
 
 | Таблица | Состав индекса | Пояснение |
 |---|---|---|
-| `users` | 1) `email, id`<br>2) `phone, id`<br>3) `session, id` | Поиск пользователя по email/телефону и по сессии |
-| `sellers` | 1) `user_id` | Получение профиля продавца по пользователю |
+| `users` | 1) `email, id`<br>2) `phone, id`<br>3) `session, session_expires_at, id` | Поиск пользователя по email, телефону и активной сессии |
+| `sellers` | 1) `user_id, id` | Получение профиля продавца по пользователю |
 | `products` | 1) `seller_id, id`<br>2) `category_id, price, id` | Список товаров продавца, список товаров каталога по категории и цене |
-| `categories` | 1) `parent_id, name` | Построение дерева категорий |
-| `product_media` | 1) `product_id, position` | Получение медиа товара в нужном порядке |
-| `product_ratings` | 1) `product_id` | Получение рейтинга и числа отзывов товара |
-| `product_purchase_stats` | 1) `product_id` | Получение количества покупок товара |
-| `carts` | 1) `user_id` | Поиск корзины пользователя |
+| `categories` | 1) `parent_id, id` | Построение дерева категорий |
+| `product_media` | 1) `product_id, position, file_id` | Получение медиа товара в нужном порядке |
+| `carts` | 1) `user_id, id` | Поиск корзины пользователя |
 | `orders` | 1) `user_id, created_at, id`<br>2) `user_id, status, created_at, id` | История заказов пользователя и текущие заказы пользователя |
-| `addresses` | 1) `user_id` | Список адресов пользователя |
-| `reviews` | 1) `product_id, user_id`<br>2) `product_id, created_at, id` | Получение отзыва пользователя, получение отзывов о товаре |
-| `review_replies` | 1) `review_id` | Получение ответа на конкретный отзыв |
-| `recommendations` | 1) `user_id` | Выдача рекомендаций пользователю |
+| `addresses` | 1) `user_id, id` | Список адресов пользователя |
+| `reviews` | 1) `product_id, user_id, id`<br>2) `product_id, created_at, id` | Получение отзыва пользователя, получение отзывов о товаре |
+| `review_replies` | 1) `review_id, id` | Получение ответа на конкретный отзыв |
 
 
 ### Шардирование
 
-| Таблица | Подход |
+| Компонент | Подход |
 |---|---|
 | `users` | Хеш-шардирование по `id` |
-| `sellers` | Хеш-шардирование по `user_id` |
+| `sellers` | Хеш-шардирование по `id` |
 | `products` | Хеш-шардирование по `id` |
-| `categories` | Реплицируется на все узлы |
+| `categories` | Репликация на все узлы |
 | `files` | Хеш-шардирование по `id` |
 | `product_media` | Хеш-шардирование по `product_id` |
-| `product_ratings` | Хеш-шардирование по `product_id` |
-| `product_purchase_stats` | Хеш-шардирование по `product_id` |
 | `carts` | Хеш-шардирование по `user_id` |
 | `orders` | Хеш-шардирование по `user_id` |
 | `addresses` | Хеш-шардирование по `user_id` |
 | `reviews` | Хеш-шардирование по `product_id` |
 | `review_replies` | Хеш-шардирование по `review_id` |
-| `recommendations` | Хеш-шардирование по `user_id` |
 | `user_actions` | Шардирование по `user_id`, внутри шарда — партиционирование по `created_at` |
-| `кэш рекомендаций` | Шардирование с помощью Redis Cluster |
+| `product_ratings` | Redis Cluster, ключ `product_rating:{product_id}` |
+| `product_purchase_stats` | Redis Cluster, ключ `product_purchase_stats:{product_id}` |
+| `recommendations` | Redis Cluster, ключ `user_recommendations:{user_id}` |
+
+Cassandra используется как lookup-индекс для определения нужного шарда при запросах не по ключу шардирования. Вместо проходки по всем шардам сначала выполняется запрос в Cassandra (`ключ → shard_id`), после чего обращение идёт только в нужный PostgreSQL-шард
+
 
 ### Резервирование
 
-| Таблица | Подход |
+| Компонент | Подход |
 |---|---|
-| `users`, `sellers`, `products`, `categories`, `files`, `product_media`, `addresses`, `reviews`, `review_replies`, `orders`, `carts` | Master-Slave (1 синхронная и 1 асинхронная) |
-| `product_ratings`, `product_purchase_stats`, `recommendations` | Master-Slave (1 асинхронная реплика) |
+| `users`, `sellers`, `products`, `categories`, `files`, `product_media`, `carts`, `orders`, `addresses`, `reviews`, `review_replies` | Master-Slave (1 sync + 1 async) |
 | `user_actions` | ReplicatedMergeTree (2 реплики на шард) |
+| `product_ratings`, `product_purchase_stats`, `recommendations` | Redis Cluster + RDB snapshot |
+| `shard_lookup` | Cassandra RF=3 |
 
 ### Схема резервного копирования
 
@@ -322,8 +332,8 @@ Ozon — один из крупнейших маркетплейсов в Рос
 |---|---|
 | PostgreSQL (Citus) | Full backup 1 раз в день + архивирование WAL каждые 15 минут |
 | ClickHouse | Full backup 1 раз в день |
-| Redis | Без резервного копирования |
-
+| Redis | RDB snapshot по расписанию + периодическое полное или частичное переобновление из ClickHouse |
+| Cassandra | Snapshot + инкрементальные backup'ы SSTable |
 
 ## Источники:
 
